@@ -1,7 +1,6 @@
 import 'package:http/http.dart';
 import 'package:http_cache/http_cache.dart';
 import 'package:http_cache/src/util/http_constants.dart';
-import 'package:http_cache/src/util/http_date.dart';
 
 import 'util/helpers.dart';
 
@@ -30,7 +29,7 @@ class CachingInfo {
     final vary = headers[kHttpHeaderVary];
     final etag = headers[kHttpHeaderETag];
     final expires = _readExpires(headers, control);
-    final lastModified = HttpDate.tryParse(headers[kHttpHeaderLastModifiedHeader]);
+    final lastModified = tryParseHttpDate(headers[kHttpHeaderLastModifiedHeader]);
     return CachingInfo(statusCode, control, vary, etag, expires, lastModified);
   }
 
@@ -64,6 +63,6 @@ DateTime? _readExpires(Headers headers, CacheControl? control) {
   if (maxAge != null) {
     return DateTime.now().add(Duration(seconds: maxAge - (age ?? 0)));
   } else {
-    return HttpDate.tryParse(headers[kHttpHeaderExpires]);
+    return tryParseHttpDate(headers[kHttpHeaderExpires]);
   }
 }

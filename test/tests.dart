@@ -1,15 +1,15 @@
 import 'package:http_cache/http_cache.dart';
+import 'package:http_cache/src/util/helpers.dart';
 import 'package:http_cache/src/util/http_constants.dart';
-import 'package:http_cache/src/util/http_date.dart';
 import 'package:test/test.dart';
 
 void main() {
   group('HttpDate', () {
     test('tryParse', () {
-      expect(HttpDate.tryParse('Fri, 09 Feb 2018 19:20:21 GMT'), DateTime.utc(2018, DateTime.february, 9, 19, 20, 21));
-      expect(HttpDate.tryParse('Friday, 09 Feb 2018 19:20:21 GMT'), null);
-      expect(HttpDate.tryParse('Fri, 09 Feb 2018 9:20:21 GMT'), null);
-      expect(HttpDate.tryParse('Fri, 09 Feb 2018 AB:20:21 GMT'), null);
+      expect(tryParseHttpDate('Fri, 09 Feb 2018 19:20:21 GMT'), DateTime.utc(2018, DateTime.february, 9, 19, 20, 21));
+      expect(tryParseHttpDate('Friday, 09 Feb 2018 19:20:21 GMT'), null);
+      expect(tryParseHttpDate('Fri, 09 Feb 2018 9:20:21 GMT'), null);
+      expect(tryParseHttpDate('Fri, 09 Feb 2018 AB:20:21 GMT'), null);
     });
   });
   group('CacheControl', () {

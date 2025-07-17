@@ -1,8 +1,8 @@
 import 'package:collection/collection.dart';
 import 'package:http/http.dart';
 import 'package:http_cache/src/caching_info.dart';
+import 'package:http_cache/src/util/helpers.dart';
 import 'package:http_cache/src/util/http_constants.dart';
-import 'package:http_cache/src/util/http_date.dart';
 
 class CacheKey {
   final Uri url;
@@ -45,7 +45,7 @@ class CacheEntryMeta {
   static CacheEntryMeta fromResponse(BaseRequest request, StreamedResponse response, CachingInfo info) {
     return CacheEntryMeta(
       CacheKey(request.url, request.readVaryHeaders(response)),
-      HttpDate.tryParse(response.headers[kHttpHeaderDate]) ?? DateTime.now(),
+      tryParseHttpDate(response.headers[kHttpHeaderDate]) ?? DateTime.now(),
       info,
       response.reasonPhrase,
       response.headers,
