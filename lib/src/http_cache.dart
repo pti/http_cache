@@ -35,6 +35,14 @@ abstract class HttpCache {
   /// (store to cache, but always validate).
   var defaultCacheControl = CacheControl.using(noCache: true);
 
+  /// Disable to not include [kHttpHeaderIfNoneMatchHeader] or [kHttpHeaderIfModifiedSinceHeader] headers
+  /// in validation requests.
+  ///
+  /// On the web validation requests seem to fail if enabled. Perhaps because the browser itself has caching
+  /// enabled (and it cannot be disabled?). Of course using [HttpCache] on the web shouldn't be needed/used unless
+  /// you need to override caching behavior.
+  var useValidationHeaders = true;
+
   /// Lookup a cache entry matching the given request.
   FutureOr<HttpCacheEntry?> lookup(BaseRequest request);
 
@@ -63,7 +71,7 @@ abstract class HttpCache {
     HttpCacheEntry? entry;
 
     if (instruction != null) {
-      if (instruction.needsValidation) {
+      if (instruction.validate) {
         _log('validate');
         request.headers.addAll(instruction.headers ?? {});
         entry = instruction.entry;
@@ -109,14 +117,14 @@ abstract class HttpCache {
       _ => entry.info.shouldValidate(),
     };
 
-    if (validate) {
+    if (validate && useValidationHeaders) {
       headers = {
         kHttpHeaderIfNoneMatchHeader: ?entry.responseHeaders[kHttpHeaderETag],
         kHttpHeaderIfModifiedSinceHeader: ?entry.responseHeaders[kHttpHeaderLastModifiedHeader],
       };
     }
 
-    return _CacheInstruction(entry, headers);
+    return _CacheInstruction(entry, validate, headers);
   }
 
   CacheMode _getMode(BaseRequest request) => (request is CacheableRequest ? request.mode : null) ?? mode;
@@ -154,15 +162,13 @@ abstract class HttpCache {
 }
 
 class _CacheInstruction {
+  final bool validate;
   final HttpCacheEntry entry;
 
   /// Additional request headers required to revalidate the entry.
-  /// Value is `null` if no revalidation is needed.
   final Headers? headers;
 
-  _CacheInstruction(this.entry, this.headers);
-
-  bool get needsValidation => headers != null;
+  _CacheInstruction(this.entry, this.validate, this.headers);
 }
 
 extension on BaseRequest {
