@@ -57,11 +57,13 @@ class CachingInfo {
 }
 
 DateTime? _readExpires(Headers headers, CacheControl? control) {
-  final age = headers[kHttpHeaderAge]?.tryParseInt();
+  // https://httpwg.org/specs/rfc9111.html#calculating.freshness.lifetime
+  // TODO heuristic freshness
+  final ref = tryParseHttpDate(headers[kHttpHeaderDate]) ?? DateTime.now();
   final maxAge = control?.maxAge;
 
   if (maxAge != null) {
-    return DateTime.now().add(Duration(seconds: maxAge - (age ?? 0)));
+    return ref.add(Duration(seconds: maxAge));
   } else {
     return tryParseHttpDate(headers[kHttpHeaderExpires]);
   }

@@ -87,7 +87,7 @@ abstract class HttpCache {
 
     try {
       var response = await inner.send(request);
-      _log('got response ${response.statusCode}');
+      _log('got response ${response.statusCode} (${response.headers[kHttpHeaderCacheControl]})');
       response = await _handleResponse(request, response, entry);
       return response;
 
