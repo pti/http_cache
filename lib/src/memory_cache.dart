@@ -5,14 +5,15 @@ import 'package:http/http.dart';
 import 'package:http_cache/src/caching_info.dart';
 import 'package:http_cache/src/http_cache.dart';
 import 'package:http_cache/src/http_cache_entry.dart';
+import 'package:http_cache/src/util/http_constants.dart';
 
 class MemoryCache extends HttpCache {
 
-  final _entries = <HttpCacheEntry>[];
+  final _entries = <MemoryCacheEntry>[];
 
   @override
   HttpCacheEntry? lookup(BaseRequest request) {
-    return _entries.firstWhereOrNull((e) => e.key.url == request.url && e.key.hasMatchingVaryHeaders(request.headers));
+    return _entries.firstWhereOrNull((e) => e.key.isMatching(request.url, request.headers));
   }
 
   @override
@@ -21,8 +22,21 @@ class MemoryCache extends HttpCache {
   }
 
   @override
-  void add(HttpCacheEntry entry) {
+  void add(covariant MemoryCacheEntry entry) {
     _entries.add(entry);
+  }
+
+  @override
+  HttpCacheEntry? update(covariant MemoryCacheEntry entry, Headers headers) {
+    final index = _entries.indexWhere((e) => e == entry);
+
+    if (index == -1) {
+      return null;
+    }
+
+    final updated = _entries[index].updateWith(headers);
+    _entries[index] = updated;
+    return updated;
   }
 
   @override
@@ -39,7 +53,7 @@ class MemoryCache extends HttpCache {
 class MemoryCacheEntry extends HttpCacheEntry {
   final Uint8List body;
 
-  MemoryCacheEntry(super.key, super.date, super.responseHeaders, super.info, super.reasonPhrase, this.body);
+  MemoryCacheEntry(super.key, super.date, super.info, super.reasonPhrase, super.responseHeaders, this.body);
 
   static Future<HttpCacheEntry?> fromResponse(BaseRequest request, StreamedResponse response, CachingInfo info) async {
     // TODO check if response length > size
@@ -66,5 +80,9 @@ class MemoryCacheEntry extends HttpCacheEntry {
       isRedirect: response?.isRedirect ?? false,
       headers: responseHeaders,
     );
+  }
+
+  MemoryCacheEntry updateWith(Headers headers) {
+    return MemoryCacheEntry(key, headers.readDate(), info.withHeaders(headers), reasonPhrase, headers, body);
   }
 }

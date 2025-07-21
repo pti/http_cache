@@ -59,6 +59,8 @@ abstract class HttpCache {
   /// Remove all entries from the cache.
   FutureOr<void> clear();
 
+  FutureOr<HttpCacheEntry?> update(HttpCacheEntry entry, Headers headers);
+
   /// Cache utilizing entry point / interceptor for sending HTTP requests.
   Future<StreamedResponse> send(BaseRequest request, Client inner) async {
 
@@ -133,7 +135,14 @@ abstract class HttpCache {
 
     if (response.statusCode == kHttpStatusNotModified && entry != null) {
       // Return the response from the cache.
-      return entry.toResponse(request, response);
+      // Update the entry in case headers changed (e.g. date or expires → update CachingInfo.expires).
+      // The 304 response might not contain all of the headers (e.g. content-type / length) so instead simply replacing
+      // the headers, override existing values with new ones.
+      final mergedHeaders = <String, String>{};
+      mergedHeaders.addAll(entry.responseHeaders);
+      mergedHeaders.addAll(response.headers);
+      final updated = await update(entry, mergedHeaders);
+      return (updated ?? entry).toResponse(request, response);
     }
 
     if (entry != null) {

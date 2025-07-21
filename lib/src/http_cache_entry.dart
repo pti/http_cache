@@ -20,6 +20,8 @@ class CacheKey {
     return varyHeaders.entries.every((e) => e.value == requestHeaders[e.key]);
   }
 
+  bool isMatching(Uri url, Headers headers) => this.url == url && hasMatchingVaryHeaders(headers);
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) || other is CacheKey && runtimeType == other.runtimeType
@@ -45,12 +47,26 @@ class CacheEntryMeta {
   static CacheEntryMeta fromResponse(BaseRequest request, StreamedResponse response, CachingInfo info) {
     return CacheEntryMeta(
       CacheKey(request.url, request.readVaryHeaders(response)),
-      tryParseHttpDate(response.headers[kHttpHeaderDate]) ?? DateTime.now(),
+      response.headers.readDate(),
       info,
       response.reasonPhrase,
       response.headers,
     );
   }
+
+  CacheEntryMeta withHeaders(Headers headers) {
+    return CacheEntryMeta(
+      key,
+      headers.readDate(),
+      info.withHeaders(headers),
+      reasonPhrase,
+      headers,
+    );
+  }
+}
+
+extension ExtraHeaders on Headers {
+  DateTime readDate() => tryParseHttpDate(this[kHttpHeaderDate]) ?? DateTime.now();
 }
 
 abstract class HttpCacheEntry extends CacheEntryMeta {

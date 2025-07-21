@@ -18,7 +18,7 @@ class CachingInfo {
   CachingInfo(this.statusCode, this.control, this.vary, this.etag, this.expires, this.lastModified);
 
   factory CachingInfo.fromResponse(BaseRequest request, int statusCode, Headers headers, CacheControl? defaultControl) {
-    var control = CacheControl.fromResponse(headers);
+    var control = CacheControl.fromHeaders(headers);
 
     if (request is CacheableRequest && request.control != null) {
       control = request.control;
@@ -26,6 +26,15 @@ class CachingInfo {
 
     control ??= defaultControl;
 
+    final vary = headers[kHttpHeaderVary];
+    final etag = headers[kHttpHeaderETag];
+    final expires = _readExpires(headers, control);
+    final lastModified = tryParseHttpDate(headers[kHttpHeaderLastModifiedHeader]);
+    return CachingInfo(statusCode, control, vary, etag, expires, lastModified);
+  }
+
+  CachingInfo withHeaders(Headers headers) {
+    final control = CacheControl.fromHeaders(headers) ?? this.control;
     final vary = headers[kHttpHeaderVary];
     final etag = headers[kHttpHeaderETag];
     final expires = _readExpires(headers, control);

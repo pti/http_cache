@@ -11,6 +11,7 @@ import 'package:http_cache/src/caching_info.dart';
 import 'package:http_cache/src/http_cache.dart';
 import 'package:http_cache/src/http_cache_entry.dart';
 import 'package:http_cache/src/util/buffered_writer.dart';
+import 'package:http_cache/src/util/http_constants.dart';
 import 'package:http_cache/src/util/task.dart';
 import 'package:path/path.dart' as p;
 import 'package:rxdart/rxdart.dart';
@@ -103,7 +104,7 @@ class FileCache extends HttpCache {
     int headerSize;
 
     try {
-      headerSize = await FileCacheEntry._toFile(meta, response, file);
+      headerSize = await FileCacheEntry._toFile(meta, response.stream, file);
       stat = await file.stat();
 
     } catch (err) {
@@ -132,10 +133,8 @@ class FileCache extends HttpCache {
   }
 
   @override
-  Future<void> add(HttpCacheEntry entry) async {
+  Future<void> add(covariant FileCacheEntry entry) async {
     await _checkInitialize();
-
-    entry as FileCacheEntry;
 
     if (entry.skipAdd) {
       return;
@@ -161,6 +160,19 @@ class FileCache extends HttpCache {
       _filenames?.add(entry.filename);
       _entries[entry.filename] = entry;
     }
+  }
+
+  @override
+  Future<HttpCacheEntry?> update(covariant FileCacheEntry entry, Headers headers) async {
+    final existing = _entries[entry.filename];
+
+    if (existing == null) {
+      return null;
+    }
+
+    final updated = await existing.updateWith(headers);
+    _entries[entry.filename] = updated;
+    return updated;
   }
 
   @override
@@ -362,15 +374,19 @@ class FileCacheEntry extends HttpCacheEntry {
     }
   }
 
-  static Future<int> _toFile(CacheEntryMeta meta, StreamedResponse response, File file) async {
+  static Future<int> _toFile(CacheEntryMeta meta, Stream<List<int>> contentStream, File file) async {
+    return __toFile(meta.toBytes(), contentStream, file);
+  }
+
+  static Future<int> __toFile(Uint8List metaBytes, Stream<List<int>> contentStream, File file) async {
     IOSink? sink;
 
     try {
-      sink = file.openWrite();
+      sink = file.openWrite(mode: FileMode.write);
       final buf = BufferedWriter(sink);
-      final metaLength = _EntryFileHeader(meta).write(buf);
+      final metaLength = _EntryFileHeader._write(buf, _EntryFileHeader._supportedVersion, metaBytes);
 
-      await for (final chunk in response.stream) {
+      await for (final chunk in contentStream) {
         buf.write(chunk);
       }
 
@@ -379,6 +395,20 @@ class FileCacheEntry extends HttpCacheEntry {
 
     } finally {
       await sink?.close();
+    }
+  }
+
+  static Future<void> _overwriteHeaders(Uint8List metaBytes, File file) async {
+    RandomAccessFile? raf;
+
+    try {
+      raf = await file.open(mode: FileMode.append);
+      await raf.setPosition(_EntryFileHeader._fixedSize);
+      await raf.writeFrom(metaBytes);
+      await raf.flush();
+
+    } finally {
+      await raf?.close();
     }
   }
 
@@ -408,6 +438,29 @@ class FileCacheEntry extends HttpCacheEntry {
   bool isMatch(BaseRequest request) {
     return key.url == request.url
         && (key.varyHeaders?.entries.every((e) => request.headers[e.key] == e.value) ?? true);
+  }
+
+  Future<FileCacheEntry> updateWith(Headers headers) async {
+    final newMeta = withHeaders(headers);
+    final newMetaBytes = newMeta.toBytes();
+    final newMetaLength = newMetaBytes.lengthInBytes;
+
+    // If the part before the content remains the same, just overwrite it to the file.
+    // Otherwise create a new file. Perhaps this could be improved by writing the "meta" to a separate file or perhaps
+    // a database, or reserving some extra room.
+    if (newMetaLength == metaLength) {
+      _log('update file entry');
+      await FileCacheEntry._overwriteHeaders(newMetaBytes, file);
+
+    } else {
+      _log('meta length changed - create a new entry file');
+      final tmp = File('${file.path}.tmp');
+      final offset = _EntryFileHeader._fixedSize + metaLength;
+      await FileCacheEntry.__toFile(newMetaBytes, file.openRead(offset), tmp);
+      await tmp.rename(file.path);
+    }
+
+    return FileCacheEntry(key, headers.readDate(), info.withHeaders(headers), reasonPhrase, headers, file, newMetaLength, filename, stat);
   }
 }
 
@@ -567,8 +620,7 @@ class _EntryFileHeader {
     }
   }
 
-  int write(BufferedWriter out) {
-    final metaBytes = utf8.encode(jsonEncode(meta.toJson()));
+  static int _write(BufferedWriter out, int version, Uint8List metaBytes) {
     final metaLength = metaBytes.lengthInBytes;
     final fixedData = ByteData(_fixedSize)
       ..setUint32(0, version)
@@ -577,4 +629,8 @@ class _EntryFileHeader {
     out.write(metaBytes);
     return metaLength;
   }
+}
+
+extension on CacheEntryMeta {
+  Uint8List toBytes() => utf8.encode(jsonEncode(toJson()));
 }

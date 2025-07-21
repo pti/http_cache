@@ -21,7 +21,7 @@ class CacheControl {
   bool get noStore => directives.containsKey(kNoStore);
   bool get noCache => directives.containsKey(kNoCache);
 
-  static CacheControl? fromResponse(Headers headers) {
+  static CacheControl? fromHeaders(Headers headers) {
     final cacheControl = headers[kHttpHeaderCacheControl];
 
     if (cacheControl == null) {
