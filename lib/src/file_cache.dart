@@ -12,6 +12,7 @@ import 'package:http_cache/src/http_cache.dart';
 import 'package:http_cache/src/http_cache_entry.dart';
 import 'package:http_cache/src/util/buffered_writer.dart';
 import 'package:http_cache/src/util/http_constants.dart';
+import 'package:http_cache/src/util/locker.dart';
 import 'package:http_cache/src/util/task.dart';
 import 'package:path/path.dart' as p;
 import 'package:rxdart/rxdart.dart';
@@ -32,11 +33,18 @@ class FileCache extends HttpCache {
   /// Extra number of bytes to free when cache size has hit [maxSize].
   final int freeMargin;
 
+  bool get _isCapped => maxSize > 0;
+
   List<EntryFilename>? _filenames;
   int? _currentSize;
   final _entries = <EntryFilename, FileCacheEntry>{};
   late final _initializer = Task(() => _initialize());
   Task<void>? _freer;
+
+  Timer? _freeTimer;
+
+  /// Used for synchronizing access to individual files, e.g. in case an entry needs to be evicted while still reading.
+  final _sync = Locker<String>(const Duration(seconds: 5));
 
   FileCache(this.directory, {this.maxSize = 10_000_000, int? freeMargin}):
         freeMargin = freeMargin ?? (maxSize ~/ 10)
@@ -45,7 +53,12 @@ class FileCache extends HttpCache {
   }
 
   @override
-  Future<HttpCacheEntry?> lookup(BaseRequest request) async {
+  void dispose() {
+    _freeTimer?.cancel();
+  }
+
+  @override
+  Future<HttpCacheEntry?> lookup(BaseRequest request, [covariant FileCacheRequestContext? context]) async {
     await _checkInitialize();
 
     final urlPart = request.url.toFilenamePart();
@@ -55,43 +68,59 @@ class FileCache extends HttpCache {
       return null;
     }
 
+    FileCacheEntry? matchingEntry;
+
     for (final match in matches) {
-      FileCacheEntry? entry = _entries[match];
+      var entry = _entries[match];
+      final file = entry?.file ?? _getAbsoluteFile(match);
+      final key = _lockKey(file);
+      Lock? lock;
 
-      if (entry == null) {
-        entry = await FileCacheEntry._fromFile(_getAbsoluteFile(match));
+      try {
+        lock = await _sync.lock(key);
 
-        if (entry != null) {
-          _entries[match] = entry;
+        if (entry == null) {
+          entry = await FileCacheEntry._fromFile(file);
 
-        } else {
-          // Remove entry if reading it failed.
-          await _evict(match);
+          if (entry != null) {
+            _entries[match] = entry;
+
+          } else {
+            // Remove entry if reading it failed.
+            await _evict(match, context);
+          }
         }
-      }
 
-      if (entry != null && entry.isMatch(request)) {
-        // Await for updating last accessed time in case it cannot be read (e.g. file was deleted since
-        // initialization).
-        try {
-          await entry.file.setLastAccessed(DateTime.now());
-          return entry;
+        if (entry != null && entry.isMatch(request)) {
+          // Wait for updating last accessed time in case it cannot be read (e.g. file was deleted since initialization).
+          try {
+            await entry.file.setLastAccessed(DateTime.now());
+            matchingEntry = entry;
+            break;
 
-        } catch (err) {
-          return null;
+          } catch (err, st) {
+            _log('lookup: error setting last accessed', err, st);
+            break;
+          }
+        }
+
+      } finally {
+        if (matchingEntry != null && context != null && lock != null) {
+          // Keep locked until the request has been processed.
+          await context.setLock(_sync, key, lock);
+        } else {
+          _sync.unlock(key);
         }
       }
     }
 
-    return null;
+    return matchingEntry;
   }
 
+  /// When called without [context], i.e. outside [send], then lock is released already at the end of this function.
   @override
-  Future<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info) async {
-
-    if (response.contentLength != null && response.contentLength! > maxSize) {
-      return null;
-    }
+  Future<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info, [covariant FileCacheRequestContext? context]) async {
+    await _checkInitialize();
 
     // If content length wasn't specified, then one just needs to read the response entirely to know the size.
     // And since the response has been consumed by then, it cannot be read again so the entry needs to be kept around
@@ -102,96 +131,97 @@ class FileCache extends HttpCache {
     final file = _getAbsoluteFile(filename);
     FileStat stat;
     int headerSize;
+    final key = _lockKey(file);
 
-    try {
-      headerSize = await FileCacheEntry._toFile(meta, response.stream, file);
-      stat = await file.stat();
-
-    } catch (err) {
-      await file.delete();
-      rethrow;
+    if (context != null && context.lock == null) {
+      await context.setLock(_sync, key);
+      // Released once the response stream is done.
     }
 
-    final result = FileCacheEntry(
-      meta.key,
-      meta.date,
-      meta.info,
-      meta.reasonPhrase,
-      meta.responseHeaders,
-      file,
-      headerSize,
-      filename,
-      stat,
-    );
+    return await _checkLock(context, key, () async {
+      try {
+        headerSize = await FileCacheEntry._toFile(meta, response.stream, file);
+        stat = await file.stat();
 
-    if (stat.size > maxSize) {
-      result.skipAdd = true;
-      result._onComplete = (_) => file.delete().ignore();
-    }
+        final result = FileCacheEntry(
+          meta.key,
+          meta.date,
+          meta.info,
+          meta.reasonPhrase,
+          meta.responseHeaders,
+          file,
+          headerSize,
+          filename,
+          stat,
+        );
+        _addEntry(result, stat);
 
-    return result;
+        return result;
+
+      } catch (err, st) {
+        _log('create: failed to write entry file $key', err, st);
+        await file.delete().tryResult();
+        rethrow;
+      }
+    });
   }
 
+  /// The caller is expected to have written the file already.
   @override
   Future<void> add(covariant FileCacheEntry entry) async {
     await _checkInitialize();
+    final stat = await entry.file.stat();
+    _addEntry(entry, stat);
+  }
 
-    if (entry.skipAdd) {
-      return;
-    }
+  // TODO Future<void> addFile(File src, Uri url) async {
 
-    final full = entry.file.uri.pathSegments.last;
-
-    if (_filenames?.none((efn) => efn.full == full) ?? true) {
-      final stat = await entry.file.stat().tryResult();
-
-      // Check if space needs to be freed.
-      if (_isCapped && stat != null) {
-        await _waitFreerDone();
-        final excessSize = maxSize - _currentSize! - stat.size;
-
-        if (excessSize < 0) {
-          await _freeSpace(excessSize.abs() + freeMargin);
-        }
-
-        _changeCurrentSize(stat.size);
-      }
-
-      _filenames?.add(entry.filename);
-      _entries[entry.filename] = entry;
-    }
+  void _addEntry(FileCacheEntry entry, FileStat stat) {
+    // The file is added to cache even if maxSize would get exceeded. Space is freed after things have quietened down.
+    _filenames?.add(entry.filename);
+    _entries[entry.filename] = entry;
+    _changeCurrentSize(stat.size);
   }
 
   @override
-  Future<HttpCacheEntry?> update(covariant FileCacheEntry entry, Headers headers) async {
+  Future<HttpCacheEntry?> update(covariant FileCacheEntry entry, Headers headers, [covariant FileCacheRequestContext? context]) async {
+    await _checkInitialize();
     final existing = _entries[entry.filename];
 
     if (existing == null) {
       return null;
     }
 
-    final updated = await existing.updateWith(headers);
-    _entries[entry.filename] = updated;
-    return updated;
+    final key = _lockKey(entry.file);
+
+    return await _checkLock(context, key, () async {
+      final updated = await existing.updateWith(headers);
+      _entries[entry.filename] = updated;
+      return updated;
+    });
   }
 
   @override
-  Future<void> evict(CacheKey key) async {
+  Future<void> evict(CacheKey key, [covariant FileCacheRequestContext? context]) async {
     await _checkInitialize();
     final fn = EntryFilename.fromKey(key);
-    await _evict(fn);
+    await _evict(fn, context);
   }
 
-  Future<void> _evict(EntryFilename fn) async {
-    _entries.remove(fn);
+  Future<void> _evict(EntryFilename fn, [FileCacheRequestContext? context]) async {
     final file = _getAbsoluteFile(fn);
-    final stat = await file.stat().tryResult();
+    final key = _lockKey(file);
 
-    if (stat != null && stat.type == FileSystemEntityType.file) {
-      await file.delete();
-      _filenames?.removeWhere((f) => f.full == fn.full);
-      _changeCurrentSize(-stat.size);
-    }
+    await _checkLock(context, key, () async {
+      _entries.remove(fn);
+      final stat = await file.stat().tryResult();
+
+      if (stat != null && stat.type == FileSystemEntityType.file) {
+        await file.delete();
+        _filenames?.removeWhere((f) => f.full == fn.full);
+        _changeCurrentSize(-stat.size);
+      }
+    });
   }
 
   @override
@@ -199,11 +229,13 @@ class FileCache extends HttpCache {
     // Delete files individually in case the user has accidentally given a directory that is used for something
     // else too -- hoping that the file extension is sufficiently unique.
     await _checkInitialize();
+    _cancelSpaceCheck();
     await _waitFreerDone();
+
     _freer = Task(() async {
       try {
         await Future.wait(_filenames?.map((f) => _evict(f).tryResult()) ?? []);
-        _log('Clear done, current size is now ${_currentSize}B (${_filenames?.length ?? 0} entries)');
+        await _initialize();
       } finally {
         _freer = null;
       }
@@ -234,15 +266,20 @@ class FileCache extends HttpCache {
     _log('Initialized, got ${_filenames!.length} entries, total size ${_currentSize!}B');
   }
 
-  void _changeCurrentSize(int? delta) {
-    if (_currentSize != null && delta != null) {
-      _currentSize = _currentSize! + delta;
+  void _changeCurrentSize(int delta) {
+    var current = _currentSize;
+    if (current == null) return; // Not initialized yet (shouldn't even end up in here).
+
+    current = _currentSize = current + delta;
+
+    if (_isCapped && delta > 0 && current > maxSize) {
+      _rescheduleSpaceCheck();
+    } else {
+      _cancelSpaceCheck();
     }
   }
 
   File _getAbsoluteFile(EntryFilename fn) => File(p.join(directory.path, fn.full));
-
-  bool get _isCapped => maxSize > 0;
 
   Future<void> _waitFreerDone() async {
     while (_freer != null) {
@@ -250,8 +287,26 @@ class FileCache extends HttpCache {
     }
   }
 
+  void _cancelSpaceCheck() {
+    _freeTimer?.cancel();
+    _freeTimer = null;
+  }
+
+  void _rescheduleSpaceCheck() {
+    _freeTimer?.cancel();
+    _freeTimer = Timer(const Duration(seconds: 5), () {
+      final current = _currentSize;
+
+      if (current != null && current > 0 && current > maxSize) {
+        _freeSpace(current - maxSize + freeMargin).ignore();
+      }
+    });
+  }
+
   /// Free space by deleting least recently used files worth at least of [numBytes] bytes.
   Future<void> _freeSpace(int numBytes) async {
+    await _waitFreerDone();
+    _log('free space ${numBytes}B');
     _freer = Task(() async {
       try {
         final sw = Stopwatch()..start();
@@ -262,23 +317,44 @@ class FileCache extends HttpCache {
             .where((s) => s.$3 != null)
             .map((s) => (s.$1, s.$2, s.$3!))
             .sorted((a, b) => a.$3.accessed.millisecondsSinceEpoch - b.$3.accessed.millisecondsSinceEpoch)
-            .takeWhile((s) => (totalEvictionSize += s.$3.size) < numBytes)
+            .takeWhile((s) {
+              final take = totalEvictionSize < numBytes;
+              totalEvictionSize += s.$3.size;
+              return take;
+            })
             .map((s) => _evict(s.$2));
         await Future.wait(evictions);
         _freer = null;
-        _log('Cleared ${totalEvictionSize}B in ${sw.elapsedMicroseconds}µs');
+        _log('Cleared ${totalEvictionSize}B in ${sw.elapsedMicroseconds}µs, now ${_currentSize}B total');
 
-      } catch (err) {
-        _log('Error freeing up space - resort to clearing: $err');
+      } catch (err, st) {
+        _log('Error freeing up space - resort to clearing', err, st);
         _freer = null;
         await clear();
       }
     });
     await _freer?.run();
   }
+
+  String _lockKey(File file) => file.path;
+
+  Future<T> _checkLock<T>(FileCacheRequestContext? context, String key, FutureBuilder<T> action) async {
+    final lock = context?.lock == null;
+
+    try {
+      if (lock) await _sync.lock(key);
+      return await action.call();
+
+    } finally {
+      if (lock) _sync.unlock(key);
+    }
+  }
+
+  @override
+  FileCacheRequestContext createRequestContext(BaseRequest request) => FileCacheRequestContext(request);
 }
 
-void _log(String msg) => HttpCache.logger?.log(msg);
+void _log(String msg, [Object? err, StackTrace? stackTrace]) => HttpCache.logger?.log(msg, err, stackTrace);
 
 class EntryFilename {
 
@@ -341,13 +417,11 @@ class FileCacheEntry extends HttpCacheEntry {
   final EntryFilename filename;
   final FileStat stat;
 
-  void Function(Object? error)? _onComplete;
-  var skipAdd = false;
-
   FileCacheEntry(super.key, super.date, super.info, super.reasonPhrase, super.responseHeaders,
       this.file, this.metaLength, this.filename, this.stat);
 
   static Future<FileCacheEntry?> _fromFile(File file) async {
+
     try {
       final stat = await file.stat();
 
@@ -368,8 +442,7 @@ class FileCacheEntry extends HttpCacheEntry {
       return FileCacheEntry(meta.key, meta.date, meta.info, meta.reasonPhrase, meta.responseHeaders, file, metaLength, fn, stat);
 
     } catch (err, st) {
-      _log(st.toString());
-      _log('Failed to read entry $file: $err');
+      _log('Failed to read entry $file', err, st);
       return null;
     }
   }
@@ -413,14 +486,22 @@ class FileCacheEntry extends HttpCacheEntry {
   }
 
   @override
-  StreamedResponse toResponse(BaseRequest request, [StreamedResponse? response]) {
+  StreamedResponse toResponse(BaseRequest request, [StreamedResponse? response, covariant FileCacheRequestContext? context]) {
     final contentOffset = _EntryFileHeader._fixedSize + metaLength;
-    var stream = file.openRead(contentOffset);
 
-    if (_onComplete != null) {
+    if (contentOffset > stat.size) {
+      throw ArgumentError('Invalid contentOffset (offset=$contentOffset, file=${stat.size}, meta=$metaLength)');
+    }
+
+    var stream = file.openRead(contentOffset);
+    final onComplete = context?.onResponseConsumed;
+    context?.waitingResponse = true;
+
+    if (onComplete != null) {
       stream = stream
-          .doOnDone(() => _onComplete!(null))
-          .doOnError((err, _) => _onComplete!(err));
+          .doOnCancel(() => onComplete(null))
+          .doOnDone(() => onComplete(null))
+          .doOnError((err, _) => onComplete(err));
     }
 
     return StreamedResponse(
@@ -449,11 +530,11 @@ class FileCacheEntry extends HttpCacheEntry {
     // Otherwise create a new file. Perhaps this could be improved by writing the "meta" to a separate file or perhaps
     // a database, or reserving some extra room.
     if (newMetaLength == metaLength) {
-      _log('update file entry');
+      _log('update file entry, ${file.path}');
       await FileCacheEntry._overwriteHeaders(newMetaBytes, file);
 
     } else {
-      _log('meta length changed - create a new entry file');
+      _log('meta length changed ($metaLength → $newMetaLength) - create a new entry file, ${file.path}');
       final tmp = File('${file.path}.tmp');
       final offset = _EntryFileHeader._fixedSize + metaLength;
       await FileCacheEntry.__toFile(newMetaBytes, file.openRead(offset), tmp);
@@ -633,4 +714,46 @@ class _EntryFileHeader {
 
 extension on CacheEntryMeta {
   Uint8List toBytes() => utf8.encode(jsonEncode(toJson()));
+}
+
+/// Context is used for keeping access to response specific file locked for the duration of the whole request.
+/// This means that the lock is also held during remote requests that may take a while. One could release the lock
+/// for the duration of the remote request, but then again even if another request to the same resource is made while
+/// processing the first one, it would still end up doing the same remote validation request, i.e. duplicating the
+/// request. By keeping the lock for the whole process, the second request is able to utilize the cache response
+/// (if the response was cacheable). Of course if the second request uses [CacheMode.preferCached] it would need to
+/// wait longer than if lock wouldn't be kept the whole time (assuming that the remote request takes the most time).
+class FileCacheRequestContext extends CacheRequestContext {
+  Locker<String>? locker;
+  String? lockKey;
+  Lock? lock;
+  var waitingResponse = false;
+
+  FileCacheRequestContext(super.request);
+
+  Future<void> setLock(Locker<String> locker, String lockKey, [Lock? lock]) async {
+    this.locker = locker;
+    this.lockKey = lockKey;
+    this.lock = lock ?? await locker.lock(lockKey);
+  }
+
+  @override
+  void onRequestCompleted(Object? err) {
+    if (!waitingResponse) {
+      _unlock();
+    }
+  }
+
+  void onResponseConsumed(Object? err) {
+    _unlock();
+  }
+
+  void _unlock() {
+    if (lockKey != null && locker != null) {
+      locker?.unlock(lockKey!);
+      lock = null;
+      locker = null;
+      lock = null;
+    }
+  }
 }

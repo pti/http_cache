@@ -5,7 +5,7 @@ import 'package:http_cache/http_cache.dart';
 import 'package:http_cache/src/util/glogger.dart';
 
 Future<void> main() async {
-  final l = GLogger();
+  final l = GLogger((msg, [err, stackTrace]) => print(msg));
   HttpCache.logger = l;
   final url = Uri.parse('https://storage.googleapis.com/cms-storage-bucket/images/flutter_logo.width-635.png');
   final client = IOClient();

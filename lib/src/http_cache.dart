@@ -24,7 +24,7 @@ abstract class HttpCache {
     if (printer == null) {
       logger = null;
     } else {
-      logger = GLogger(printer: printer);
+      logger = GLogger(printer);
     }
   }
 
@@ -43,69 +43,87 @@ abstract class HttpCache {
   /// you need to override caching behavior.
   var useValidationHeaders = true;
 
+  void dispose() {
+  }
+
   /// Lookup a cache entry matching the given request.
-  FutureOr<HttpCacheEntry?> lookup(BaseRequest request);
+  FutureOr<HttpCacheEntry?> lookup(BaseRequest request, [CacheRequestContext? context]);
 
-  /// Creates an entry from the response.
+  /// Creates an entry from the response. Must also add the entry if created successfully.
   /// Returns `null` if the entry cannot be created.
-  FutureOr<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info);
+  FutureOr<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info, [CacheRequestContext? context]);
 
-  /// Add an entry to cache. Called after [create].
+  /// Add an entry to cache.
   FutureOr<void> add(HttpCacheEntry entry);
 
   /// Remove the specified entry from the cache.
-  FutureOr<void> evict(CacheKey key);
+  FutureOr<void> evict(CacheKey key, [CacheRequestContext? context]);
 
   /// Remove all entries from the cache.
   FutureOr<void> clear();
 
-  FutureOr<HttpCacheEntry?> update(HttpCacheEntry entry, Headers headers);
+  /// Updates metadata associated with the entry.
+  FutureOr<HttpCacheEntry?> update(HttpCacheEntry entry, Headers headers, [CacheRequestContext? context]);
 
   /// Cache utilizing entry point / interceptor for sending HTTP requests.
   Future<StreamedResponse> send(BaseRequest request, Client inner) async {
 
     if (!request.isCacheable) {
-      _log('not cacheable');
+      _log('send: not cacheable');
       return inner.send(request);
     }
 
-    final instruction = await _check(request);
+    final ctx = createRequestContext(request);
     HttpCacheEntry? entry;
 
-    if (instruction != null) {
-      if (instruction.validate) {
-        _log('validate');
-        request.headers.addAll(instruction.headers ?? {});
+    try {
+      final instruction = await _check(request, ctx);
+
+      if (instruction != null) {
         entry = instruction.entry;
 
-      } else {
-        _log('from cache');
-        return instruction.entry.toResponse(request);
+        if (instruction.validate) {
+          _log('send: validate');
+          request.headers.addAll(instruction.headers ?? {});
+
+        } else {
+          _log('send: from cache');
+          return entry.toResponse(request, null, ctx);
+        }
       }
 
-    } else {
-      _log('not found');
+    } catch (err, st) {
+      _log('send: failed to read cache entry - ignoring cache completely', err, st);
+      ctx.onRequestCompleted(err);
+      return inner.send(request);
     }
 
-    try {
-      var response = await inner.send(request);
-      _log('got response ${response.statusCode} (${response.headers[kHttpHeaderCacheControl]})');
-      response = await _handleResponse(request, response, entry);
-      return response;
+    Object? error;
 
-    } catch (_) {
+    try {
+      final response = await inner.send(request);
+      _log('send: got response ${response.statusCode} (${response.headers[kHttpHeaderCacheControl]})');
+      return await _handleResponse(request, response, entry, ctx);
+
+    } catch (err, st) {
+      _log('send: error sending or handling response ${request.url}', err, st);
+      error = err;
+
       if (entry != null && _getMode(request) == CacheMode.cachedOnError) {
-        return entry.toResponse(request);
+        return entry.toResponse(request, null, ctx);
       } else {
         rethrow;
       }
+
+    } finally {
+      ctx.onRequestCompleted(error);
     }
   }
 
   /// Does a lookup and creates instructions based on the current state of the entry, i.e.
   /// specifies whether validation is needed or not.
-  FutureOr<_CacheInstruction?> _check(BaseRequest request) async {
-    final entry = await lookup(request);
+  FutureOr<_CacheInstruction?> _check(BaseRequest request, CacheRequestContext context) async {
+    final entry = await lookup(request, context);
 
     if (entry == null) {
       return null;
@@ -131,7 +149,7 @@ abstract class HttpCache {
 
   CacheMode _getMode(BaseRequest request) => (request is CacheableRequest ? request.mode : null) ?? mode;
 
-  Future<StreamedResponse> _handleResponse(BaseRequest request, StreamedResponse response, HttpCacheEntry? entry) async {
+  Future<StreamedResponse> _handleResponse(BaseRequest request, StreamedResponse response, HttpCacheEntry? entry, CacheRequestContext context) async {
 
     if (response.statusCode == kHttpStatusNotModified && entry != null) {
       // Return the response from the cache.
@@ -141,33 +159,35 @@ abstract class HttpCache {
       final mergedHeaders = <String, String>{};
       mergedHeaders.addAll(entry.responseHeaders);
       mergedHeaders.addAll(response.headers);
-      final updated = await update(entry, mergedHeaders);
-      return (updated ?? entry).toResponse(request, response);
+      final updated = await update(entry, mergedHeaders, context);
+      return (updated ?? entry).toResponse(request, response, context);
     }
 
     if (entry != null) {
-      await evict(entry.key);
+      _log('got response ${response.statusCode}, evict entry before creating the replacement, ${entry.key.url}');
+      await evict(entry.key, context);
     }
 
     final info = CachingInfo.fromResponse(request, response.statusCode, response.headers, defaultCacheControl);
 
     if (!info.isCacheable()) {
-      _log('not cacheable');
+      _log('not cacheable, ${request.url}');
       return response;
     }
 
     // Store the response to the cache.
-    final fresh = await create(request, response, info);
+    final fresh = await create(request, response, info, context);
 
     if (fresh == null) {
       return response;
     }
 
-    await add(fresh);
-    return fresh.toResponse(request, response);
+    return fresh.toResponse(request, response, context);
   }
 
-  void _log(String msg) => logger?.log(msg);
+  CacheRequestContext createRequestContext(BaseRequest request) => CacheRequestContext(request);
+
+  void _log(String msg, [Object? err, StackTrace? stackTrace]) => logger?.log(msg, err, stackTrace);
 }
 
 class _CacheInstruction {
@@ -182,4 +202,13 @@ class _CacheInstruction {
 
 extension on BaseRequest {
   bool get isCacheable => method == kHttpMethodGet;
+}
+
+class CacheRequestContext {
+  final BaseRequest request;
+
+  CacheRequestContext(this.request);
+
+  void onRequestCompleted(Object? err) {
+  }
 }

@@ -12,13 +12,19 @@ class MemoryCache extends HttpCache {
   final _entries = <MemoryCacheEntry>[];
 
   @override
-  HttpCacheEntry? lookup(BaseRequest request) {
+  HttpCacheEntry? lookup(BaseRequest request, [CacheRequestContext? context]) {
     return _entries.firstWhereOrNull((e) => e.key.isMatching(request.url, request.headers));
   }
 
   @override
-  Future<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info) {
-    return MemoryCacheEntry.fromResponse(request, response, info);
+  Future<HttpCacheEntry?> create(BaseRequest request, StreamedResponse response, CachingInfo info, [CacheRequestContext? context]) async {
+    final entry = await MemoryCacheEntry.fromResponse(request, response, info);
+
+    if (entry != null) {
+      add(entry);
+    }
+
+    return entry;
   }
 
   @override
@@ -27,7 +33,7 @@ class MemoryCache extends HttpCache {
   }
 
   @override
-  HttpCacheEntry? update(covariant MemoryCacheEntry entry, Headers headers) {
+  HttpCacheEntry? update(covariant MemoryCacheEntry entry, Headers headers, [CacheRequestContext? context]) {
     final index = _entries.indexWhere((e) => e == entry);
 
     if (index == -1) {
@@ -40,7 +46,7 @@ class MemoryCache extends HttpCache {
   }
 
   @override
-  void evict(CacheKey key) {
+  void evict(CacheKey key, [CacheRequestContext? context]) {
     _entries.removeWhere((e) => e.key == key);
   }
 
@@ -55,7 +61,7 @@ class MemoryCacheEntry extends HttpCacheEntry {
 
   MemoryCacheEntry(super.key, super.date, super.info, super.reasonPhrase, super.responseHeaders, this.body);
 
-  static Future<HttpCacheEntry?> fromResponse(BaseRequest request, StreamedResponse response, CachingInfo info) async {
+  static Future<MemoryCacheEntry?> fromResponse(BaseRequest request, StreamedResponse response, CachingInfo info) async {
     // TODO check if response length > size
     final meta = CacheEntryMeta.fromResponse(request, response, info);
     final body = await response.stream.toBytes();
@@ -70,7 +76,7 @@ class MemoryCacheEntry extends HttpCacheEntry {
   }
 
   @override
-  StreamedResponse toResponse(BaseRequest request, [StreamedResponse? response]) {
+  StreamedResponse toResponse(BaseRequest request, [StreamedResponse? response, CacheRequestContext? context]) {
     return StreamedResponse(
       Stream.value(body),
       info.statusCode,
