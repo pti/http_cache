@@ -8,3 +8,4 @@ export 'src/file_cache.dart';
 export 'src/http_cache.dart';
 export 'src/http_cache_entry.dart';
 export 'src/memory_cache.dart';
+export 'src/request_coupler.dart';
