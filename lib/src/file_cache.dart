@@ -96,12 +96,17 @@ class FileCache extends HttpCache {
           try {
             await entry.file.setLastAccessed(DateTime.now());
             matchingEntry = entry;
-            break;
+
+          } on PathNotFoundException catch (_) {
+            _log('lookup: entry file not found - skip match');
+            _entries.remove(match);
+            _filenames?.remove(match);
 
           } catch (err, st) {
             _log('lookup: error setting last accessed', err, st);
-            break;
           }
+
+          break;
         }
 
       } finally {
