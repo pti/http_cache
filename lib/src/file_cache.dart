@@ -11,6 +11,7 @@ import 'package:http_cache/src/caching_info.dart';
 import 'package:http_cache/src/http_cache.dart';
 import 'package:http_cache/src/http_cache_entry.dart';
 import 'package:http_cache/src/util/buffered_writer.dart';
+import 'package:http_cache/src/util/helpers.dart';
 import 'package:http_cache/src/util/http_constants.dart';
 import 'package:http_cache/src/util/locker.dart';
 import 'package:http_cache/src/util/task.dart';
@@ -57,6 +58,8 @@ class FileCache extends HttpCache {
     _freeTimer?.cancel();
   }
 
+  /// If [context] is defined, then [CacheRequestContext.onRequestCompleted] or [FileCacheRequestContext.onResponseConsumed]
+  /// must be called.
   @override
   Future<HttpCacheEntry?> lookup(BaseRequest request, [covariant FileCacheRequestContext? context]) async {
     await _checkInitialize();
@@ -642,16 +645,6 @@ extension on int {
 
 extension on DateTime {
   int toTimestamp() => millisecondsSinceEpoch;
-}
-
-extension _ExtraFuture<T> on Future<T> {
-  Future<T?> tryResult() async {
-    try {
-      return await this;
-    } catch (_) {
-      return null;
-    }
-  }
 }
 
 extension on Directory {

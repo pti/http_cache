@@ -11,4 +11,6 @@ class CacheableRequest extends Request {
   final CacheControl? control;
 
   CacheableRequest(super.method, super.url, {this.mode, this.control});
+
+  CacheableRequest.get(Uri url, {this.mode, this.control}): super('GET', url);
 }

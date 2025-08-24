@@ -1,7 +1,6 @@
 import 'package:collection/collection.dart';
 import 'package:http/http.dart';
 import 'package:http_cache/http_cache.dart';
-import 'package:http_cache/src/caching_info.dart';
 import 'package:http_cache/src/util/helpers.dart';
 import 'package:http_cache/src/util/http_constants.dart';
 
