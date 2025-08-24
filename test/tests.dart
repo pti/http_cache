@@ -16,19 +16,24 @@ void main() {
     test('fromResponse1', () {
       final c = CacheControl.fromHeaders({kHttpHeaderCacheControl: 'max-age=1234'});
       expect(c, isNotNull);
-      expect(c?.maxAge, 1234);
+      expect(c?.maxAge?.inSeconds, 1234);
     });
     test('fromResponse2', () {
       final c = CacheControl.fromHeaders({kHttpHeaderCacheControl: 'max-age=0, no-cache'});
       expect(c, isNotNull);
-      expect(c?.maxAge, 0);
+      expect(c?.maxAge?.inSeconds, 0);
       expect(c?.noCache, true);
     });
     test('fromResponse3', () {
       final c = CacheControl.fromHeaders({kHttpHeaderCacheControl: 'public, max-age=3600'});
       expect(c, isNotNull);
       expect(c?.directives['public'], true);
-      expect(c?.maxAge, 3600);
+      expect(c?.maxAge?.inSeconds, 3600);
+    });
+    test('Other max-ages', () {
+      expect(CacheControl.fromHeaders({kHttpHeaderCacheControl: 'max-age=0'})?.maxAge?.inSeconds, 0);
+      expect(CacheControl.fromHeaders({kHttpHeaderCacheControl: 'max-age=-1'})?.maxAge?.inSeconds, -1);
+      expect(CacheControl.fromHeaders({kHttpHeaderCacheControl: 'max-age=341.4'})?.maxAge, null);
     });
   });
 }

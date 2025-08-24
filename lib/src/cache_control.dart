@@ -7,17 +7,37 @@ class CacheControl {
   static const kNoStore = 'no-store';
   static const kNoCache = 'no-cache';
 
+  /// Custom directive that can be used to ensure freshness for at least the specified duration.
+  /// More specific in cases where response date+age+max-age result in determining that the response is already stale.
+  static const kMinFresh = 'min-fresh';
+
   final Map<String, Object> directives;
 
-  CacheControl(this.directives);
+  CacheControl(Map<String, Object> directives): directives = Map.unmodifiable(directives);
 
-  CacheControl.using({Duration? maxAge, bool? noStore, bool? noCache}): this(Map.unmodifiable({
+  CacheControl.using({Duration? maxAge, bool? noStore, bool? noCache, Duration? minFresh}): this({
     kMaxAge: ?maxAge?.inSeconds,
     kNoStore: ?noStore,
     kNoCache: ?noCache,
-  }));
+    kMinFresh: ?minFresh?.inSeconds,
+  });
 
-  int? get maxAge => directives[kMaxAge] as int?;
+  CacheControl override(CacheControl other) => CacheControl(Map.of(directives)..addAll(other.directives));
+
+  Duration? get maxAge => _getDuration(kMaxAge);
+
+  Duration? get minFresh => _getDuration(kMinFresh);
+
+  Duration? _getDuration(String directive) {
+    final value = directives[directive];
+
+    if (directive == kMaxAge && value == null) {
+      print(directives);
+    }
+
+    return value is int ? Duration(seconds: value) : null;
+  }
+
   bool get noStore => directives.containsKey(kNoStore);
   bool get noCache => directives.containsKey(kNoCache);
 

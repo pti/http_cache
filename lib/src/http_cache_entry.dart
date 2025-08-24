@@ -66,7 +66,13 @@ class CacheEntryMeta {
 }
 
 extension ExtraHeaders on Headers {
-  DateTime readDate() => tryParseHttpDate(this[kHttpHeaderDate]) ?? DateTime.now();
+  DateTime? tryDate() => tryParseHttpDate(this[kHttpHeaderDate]);
+  DateTime readDate() => tryDate() ?? DateTime.now();
+
+  Duration? tryAge() {
+    final ageSeconds = this[kHttpHeaderAge]?.tryParseInt();
+    return ageSeconds == null ? null : Duration(seconds: ageSeconds);
+  }
 }
 
 abstract class HttpCacheEntry extends CacheEntryMeta {
