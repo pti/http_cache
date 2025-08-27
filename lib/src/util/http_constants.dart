@@ -1,5 +1,6 @@
 
 const kHttpMethodGet = 'GET';
+const kHttpMethodHead = 'HEAD';
 
 const kHttpHeaderAge = 'age';
 const kHttpHeaderCacheControl = 'cache-control';

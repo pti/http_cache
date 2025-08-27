@@ -1,6 +1,7 @@
 import 'package:http/http.dart';
 import 'package:http_cache/src/cache_control.dart';
 import 'package:http_cache/src/http_cache.dart';
+import 'package:http_cache/src/util/http_constants.dart';
 
 class CacheableRequest extends Request {
 
@@ -12,5 +13,5 @@ class CacheableRequest extends Request {
 
   CacheableRequest(super.method, super.url, {this.mode, this.control});
 
-  CacheableRequest.get(Uri url, {this.mode, this.control}): super('GET', url);
+  CacheableRequest.get(Uri url, {this.mode, this.control}): super(kHttpMethodGet, url);
 }

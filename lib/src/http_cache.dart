@@ -43,6 +43,11 @@ abstract class HttpCache {
   /// you need to override caching behavior.
   var useValidationHeaders = true;
 
+  /// Used for checking if a request is potentially cacheable. If `false` is returned,
+  /// then the cache is bypassed and handled completely with the inner client.
+  bool Function(BaseRequest) isRequestCacheable = (req) => req is CacheableRequest
+      || req.method == kHttpMethodGet || req.method == kHttpMethodHead;
+
   void dispose() {
   }
 
@@ -68,7 +73,7 @@ abstract class HttpCache {
   /// Cache utilizing entry point / interceptor for sending HTTP requests.
   Future<StreamedResponse> send(BaseRequest request, Client inner) async {
 
-    if (!request.isCacheable) {
+    if (!isRequestCacheable(request)) {
       _log('send: not cacheable');
       return inner.send(request);
     }
@@ -198,10 +203,6 @@ class _CacheInstruction {
   final Headers? headers;
 
   _CacheInstruction(this.entry, this.validate, this.headers);
-}
-
-extension on BaseRequest {
-  bool get isCacheable => method == kHttpMethodGet;
 }
 
 class CacheRequestContext {
