@@ -45,8 +45,10 @@ abstract class HttpCache {
 
   /// Used for checking if a request is potentially cacheable. If `false` is returned,
   /// then the cache is bypassed and handled completely with the inner client.
-  bool Function(BaseRequest) isRequestCacheable = (req) => req is CacheableRequest
-      || req.method == kHttpMethodGet || req.method == kHttpMethodHead;
+  bool Function(BaseRequest) isRequestCacheable = (req) => req.method == kHttpMethodGet || req.method == kHttpMethodHead;
+
+  /// Used for checking if the response should be stored in cache.
+  bool Function(BaseRequest, BaseResponse, CachingInfo) isResponseCacheable = (_, _, info) => info.isCacheable();
 
   void dispose() {
   }
@@ -175,7 +177,7 @@ abstract class HttpCache {
 
     final info = CachingInfo.fromResponse(request, response.statusCode, response.headers, defaultCacheControl);
 
-    if (!info.isCacheable()) {
+    if (!isResponseCacheable(request, response, info)) {
       _log('not cacheable, ${request.url}');
       return response;
     }

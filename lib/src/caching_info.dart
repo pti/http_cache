@@ -45,8 +45,10 @@ class CachingInfo {
   }
 
   bool isCacheable() {
-    // For now only handle a subset of responses cacheable - https://developer.mozilla.org/en-US/docs/Glossary/cacheable
-    if (statusCode != kHttpStatusOk) {
+    // https://developer.mozilla.org/en-US/docs/Glossary/cacheable
+    const cacheableStatuses = {200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501};
+
+    if (!cacheableStatuses.contains(statusCode)) {
       return false;
     }
 
