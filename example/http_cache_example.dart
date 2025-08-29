@@ -30,11 +30,14 @@ Future<void> main() async {
     // Use CacheMode.alwaysValidate to force validating.
     final resp2b = await cc.send(CacheableRequest('GET', url, mode: CacheMode.alwaysValidate));
     l.log('--- 2b. got ${resp2b.statusCode} ${resp2b.contentLength}B');
+    // The response needs to be consumed so that FileCache knows when the lock can be released.
+    await resp2b.stream.toBytes();
 
     // Override the cache-control for the next response to demonstrate validating.
     await cache.evict(CacheKey(url));
     final resp3 = await cc.send(CacheableRequest('GET', url, control: CacheControl.using(maxAge: const Duration(seconds: 1))));
     l.log('--- 3. got ${resp3.statusCode} ${resp3.contentLength}B');
+    await resp3.stream.toBytes();
 
     // Since 1s has elapsed, validation is needed for the next request.
     await Future<void>.delayed(const Duration(seconds: 2));
@@ -45,6 +48,7 @@ Future<void> main() async {
     await Future<void>.delayed(const Duration(seconds: 2));
     final resp5 = await cc.send(CacheableRequest('GET', url, mode: CacheMode.preferCached));
     l.log('--- 5. got ${resp5.statusCode} ${resp5.contentLength}B');
+    await resp5.stream.toBytes();
 
   } finally {
     cc.close();
