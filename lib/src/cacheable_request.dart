@@ -14,4 +14,5 @@ class CacheableRequest extends Request {
   CacheableRequest(super.method, super.url, {this.mode, this.control});
 
   CacheableRequest.get(Uri url, {this.mode, this.control}): super(kHttpMethodGet, url);
+  CacheableRequest.head(Uri url, {this.mode, this.control}): super(kHttpMethodHead, url);
 }

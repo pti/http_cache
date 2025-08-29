@@ -35,10 +35,9 @@ Future<void> main() async {
 
     // Override the cache-control for the next response to demonstrate validating.
     await cache.evict(CacheKey(url));
-    final resp3 = await cc.send(CacheableRequest('GET', url, control: CacheControl.using(maxAge: const Duration(seconds: 1))));
+    final resp3 = await cc.sendUnstreamed(CacheableRequest.get(url, control: CacheControl.using(maxAge: const Duration(seconds: 1))));
     l.log('--- 3. got ${resp3.statusCode} ${resp3.contentLength}B');
-    await resp3.stream.toBytes();
-
+    
     // Since 1s has elapsed, validation is needed for the next request.
     await Future<void>.delayed(const Duration(seconds: 2));
     final resp4 = await cc.get(url);
@@ -46,7 +45,7 @@ Future<void> main() async {
 
     // preferCached can be used to skip validating. It can also be set globally in cache.mode
     await Future<void>.delayed(const Duration(seconds: 2));
-    final resp5 = await cc.send(CacheableRequest('GET', url, mode: CacheMode.preferCached));
+    final resp5 = await cc.send(CacheableRequest.get(url, mode: CacheMode.preferCached));
     l.log('--- 5. got ${resp5.statusCode} ${resp5.contentLength}B');
     await resp5.stream.toBytes();
 

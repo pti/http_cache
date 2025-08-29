@@ -16,4 +16,9 @@ class CachingClient extends BaseClient {
   Future<StreamedResponse> send(BaseRequest request) {
     return cache.send(request, inner);
   }
+
+  Future<Response> sendUnstreamed(BaseRequest request) async {
+    final response = await send(request);
+    return await Response.fromStream(response);
+  }
 }
