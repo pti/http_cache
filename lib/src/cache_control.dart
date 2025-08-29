@@ -38,8 +38,10 @@ class CacheControl {
     return value is int ? Duration(seconds: value) : null;
   }
 
-  bool get noStore => directives.containsKey(kNoStore);
-  bool get noCache => directives.containsKey(kNoCache);
+  bool _isSet(String directive) => directives[directive] == true;
+
+  bool get noStore => _isSet(kNoStore);
+  bool get noCache => _isSet(kNoCache);
 
   static CacheControl? fromHeaders(Headers headers) {
     final cacheControl = headers[kHttpHeaderCacheControl];
