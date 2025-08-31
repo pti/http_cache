@@ -15,6 +15,9 @@ enum CacheMode {
   /// If request fails, then return the cached response if found.
   cachedOnError,
 
+  /// Only return cached responses, or 404 if not found.
+  cacheOnly,
+
   alwaysValidate
 }
 
@@ -74,13 +77,15 @@ abstract class HttpCache {
 
   /// Cache utilizing entry point / interceptor for sending HTTP requests.
   Future<StreamedResponse> send(BaseRequest request, Client inner) async {
+    final mode = _getMode(request);
 
-    if (!isRequestCacheable(request)) {
+    if (!isRequestCacheable(request) && mode != CacheMode.cacheOnly) {
       _log('send: not cacheable');
       return inner.send(request);
     }
 
     final ctx = createRequestContext(request);
+    ctx.mode = mode;
     HttpCacheEntry? entry;
 
     try {
@@ -97,6 +102,10 @@ abstract class HttpCache {
           _log('send: from cache');
           return entry.toResponse(request, null, ctx);
         }
+
+      } else if (mode == CacheMode.cacheOnly) {
+        ctx.onRequestCompleted(null);
+        return StreamedResponse(Stream.empty(), kHttpStatusNotFound);
       }
 
     } catch (err, st) {
@@ -116,7 +125,7 @@ abstract class HttpCache {
       _log('send: error sending or handling response ${request.url}', err, st);
       error = err;
 
-      if (entry != null && _getMode(request) == CacheMode.cachedOnError) {
+      if (entry != null && mode == CacheMode.cachedOnError) {
         return entry.toResponse(request, null, ctx);
       } else {
         rethrow;
@@ -137,11 +146,11 @@ abstract class HttpCache {
     }
 
     Headers? headers;
-    final mode = _getMode(request);
-    final validate = switch (mode) {
+    final validate = switch (context.mode) {
       CacheMode.preferCached => false,
       CacheMode.alwaysValidate => true,
-      _ => entry.info.shouldValidate(),
+      CacheMode.cacheOnly => false,
+      CacheMode.standard || CacheMode.cachedOnError => entry.info.shouldValidate(),
     };
 
     if (validate && useValidationHeaders) {
@@ -209,6 +218,7 @@ class _CacheInstruction {
 
 class CacheRequestContext {
   final BaseRequest request;
+  var mode = CacheMode.standard;
 
   CacheRequestContext(this.request);
 

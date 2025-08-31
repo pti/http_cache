@@ -14,6 +14,7 @@ const kHttpHeaderVary = 'vary';
 
 const kHttpStatusOk = 200;
 const kHttpStatusNotModified = 304;
+const kHttpStatusNotFound = 404;
 
 const kHttpVaryWildcard = '*';
 
