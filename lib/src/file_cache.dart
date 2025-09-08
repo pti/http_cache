@@ -459,38 +459,26 @@ class FileCacheEntry extends HttpCacheEntry {
     return __toFile(meta.toBytes(), contentStream, file);
   }
 
-  static Future<int> __toFile(Uint8List metaBytes, Stream<List<int>> contentStream, File file) async {
-    IOSink? sink;
-
-    try {
-      sink = file.openWrite(mode: FileMode.write);
-      final buf = BufferedWriter(sink);
-      final metaLength = _EntryFileHeader._write(buf, _EntryFileHeader._supportedVersion, metaBytes);
+  static Future<int> __toFile(Uint8List metaBytes, Stream<List<int>> contentStream, File file) {
+    return file.parentGuardedWrite(FileMode.writeOnly, (output) async {
+      final buf = BufferedWriter(output);
+      final metaLength = await _EntryFileHeader._write(buf, _EntryFileHeader._supportedVersion, metaBytes);
 
       await for (final chunk in contentStream) {
-        buf.write(chunk);
+        await buf.write(chunk);
       }
 
       await buf.flush();
       return metaLength;
-
-    } finally {
-      await sink?.close();
-    }
+    });
   }
 
   static Future<void> _overwriteHeaders(Uint8List metaBytes, File file) async {
-    RandomAccessFile? raf;
-
-    try {
-      raf = await file.open(mode: FileMode.append);
+    return file.parentGuardedWrite(FileMode.writeOnlyAppend, (raf) async {
       await raf.setPosition(_EntryFileHeader._fixedSize);
       await raf.writeFrom(metaBytes);
       await raf.flush();
-
-    } finally {
-      await raf?.close();
-    }
+    });
   }
 
   @override
@@ -699,13 +687,13 @@ class _EntryFileHeader {
     }
   }
 
-  static int _write(BufferedWriter out, int version, Uint8List metaBytes) {
+  static Future<int> _write(BufferedWriter out, int version, Uint8List metaBytes) async {
     final metaLength = metaBytes.lengthInBytes;
     final fixedData = ByteData(_fixedSize)
       ..setUint32(0, version)
       ..setUint32(4, metaLength);
-    out.write(fixedData.buffer.asUint8List());
-    out.write(metaBytes);
+    await out.write(fixedData.buffer.asUint8List());
+    await out.write(metaBytes);
     return metaLength;
   }
 }
@@ -752,6 +740,44 @@ class FileCacheRequestContext extends CacheRequestContext {
       lock = null;
       locker = null;
       lock = null;
+    }
+  }
+}
+
+extension on File {
+  Future<bool> checkParentExists() async {
+    if (await parent.exists()) {
+      return false;
+
+    } else {
+      await parent.create(recursive: true);
+      return true;
+    }
+  }
+
+  Future<T> exec<T>(FileMode mode, Future<T> Function(RandomAccessFile output) action) async {
+    RandomAccessFile? output;
+
+    try {
+      output = await open(mode: mode);
+      return await action(output);
+
+    } finally {
+      await output?.close().tryResult();
+    }
+  }
+
+  Future<T> parentGuardedWrite<T>(FileMode mode, Future<T> Function(RandomAccessFile output) action) async {
+    try {
+      return await exec(mode, action);
+
+    } on PathNotFoundException catch (_) {
+      if (await checkParentExists()) {
+        _log('file parent was missing, created it - retry write');
+        return await exec(mode, action);
+      } else {
+        rethrow;
+      }
     }
   }
 }

@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 class BufferedWriter {
 
-  late final IOSink _output;
+  final RandomAccessFile _output;
   Uint8List _buf;
   var _pos = 0;
 
@@ -15,7 +15,7 @@ class BufferedWriter {
     return _output.close();
   }
 
-  void write(List<int> data) {
+  Future<void> write(List<int> data) async {
     var remaining = data.length;
     var offset = 0;
 
@@ -29,7 +29,7 @@ class BufferedWriter {
       _pos += size;
 
       if (_pos == _buf.lengthInBytes) {
-        _writeBuffer();
+        await _writeBuffer();
 
         if (remaining > 0) {
           // Open a new buffer in case the buffer would get modified during add().
@@ -39,14 +39,14 @@ class BufferedWriter {
     }
   }
 
-  void _writeBuffer() {
+  Future<void> _writeBuffer() async{
     if (_pos == 0) return;
-    _output.add(_buf.buffer.asUint8List(0, _pos));
+    await _output.writeFrom(_buf, 0, _pos);
     _pos = 0;
   }
 
   Future<void> flush() async {
-    _writeBuffer();
+    await _writeBuffer();
     await _output.flush();
   }
 }
