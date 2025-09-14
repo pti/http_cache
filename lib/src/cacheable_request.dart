@@ -1,6 +1,7 @@
 import 'package:http/http.dart';
 import 'package:http_cache/src/cache_control.dart';
 import 'package:http_cache/src/http_cache.dart';
+import 'package:http_cache/src/util/helpers.dart';
 import 'package:http_cache/src/util/http_constants.dart';
 
 class CacheableRequest extends Request {
@@ -15,4 +16,8 @@ class CacheableRequest extends Request {
 
   CacheableRequest.get(Uri url, {this.mode, this.control}): super(kHttpMethodGet, url);
   CacheableRequest.head(Uri url, {this.mode, this.control}): super(kHttpMethodHead, url);
+}
+
+extension HttpCacheStream<T> on Stream<T> {
+  Future<void> notifyDone() => take(0).length.tryResult();
 }
