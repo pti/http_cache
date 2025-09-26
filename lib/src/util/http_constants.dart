@@ -4,6 +4,8 @@ const kHttpMethodHead = 'HEAD';
 
 const kHttpHeaderAge = 'age';
 const kHttpHeaderCacheControl = 'cache-control';
+const kHttpHeaderContentLength = 'content-length';
+const kHttpHeaderContentType = 'content-type';
 const kHttpHeaderDate = 'date';
 const kHttpHeaderETag = 'etag';
 const kHttpHeaderExpires = 'expires';

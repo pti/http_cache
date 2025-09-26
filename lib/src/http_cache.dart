@@ -100,7 +100,7 @@ abstract class HttpCache {
 
         } else {
           _log('send: from cache');
-          return entry.toResponse(request, null, ctx);
+          return _toResponse(entry, request, null, ctx);
         }
 
       } else if (mode == CacheMode.cacheOnly) {
@@ -126,7 +126,7 @@ abstract class HttpCache {
       error = err;
 
       if (entry != null && mode == CacheMode.cachedOnError) {
-        return entry.toResponse(request, null, ctx);
+        return _toResponse(entry, request, null, ctx);
       } else {
         rethrow;
       }
@@ -176,7 +176,7 @@ abstract class HttpCache {
       mergedHeaders.addAll(entry.responseHeaders);
       mergedHeaders.addAll(response.headers);
       final updated = await update(entry, mergedHeaders, context);
-      return (updated ?? entry).toResponse(request, response, context);
+      return _toResponse(updated ?? entry, request, response, context);
     }
 
     if (entry != null) {
@@ -198,10 +198,32 @@ abstract class HttpCache {
       return response;
     }
 
-    return fresh.toResponse(request, response, context);
+    return _toResponse(fresh, request, response, context);
   }
 
   CacheRequestContext createRequestContext(BaseRequest request) => CacheRequestContext(request);
+
+  StreamedResponse _toResponse(HttpCacheEntry entry, BaseRequest request, StreamedResponse? response, CacheRequestContext context) {
+    if (request is CacheableRequest && request.useNotModified == true) {
+      final entryEtag = entry.responseHeaders[kHttpHeaderETag];
+      final requestEtag = request.headers[kHttpHeaderIfNoneMatchHeader];
+
+      if (response != null && response.statusCode == kHttpStatusNotModified) {
+        return response;
+
+      } else if (response == null && entryEtag == requestEtag) {
+        // TODO last modified support too
+        // This case is used for cases where no validation is needed.
+        final headers = Map.of(entry.responseHeaders);
+        headers.remove(kHttpHeaderContentLength);
+        headers.remove(kHttpHeaderContentType);
+        context.onRequestCompleted(null);
+        return StreamedResponse(Stream.empty(), kHttpStatusNotModified, headers: headers);
+      }
+    }
+
+    return entry.toResponse(request, response, context);
+  }
 
   void _log(String msg, [Object? err, StackTrace? stackTrace]) => logger?.log(msg, err, stackTrace);
 }

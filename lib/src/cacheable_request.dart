@@ -12,10 +12,14 @@ class CacheableRequest extends Request {
   /// If defined, used for overriding the cache directives of the received response.
   final CacheControl? control;
 
-  CacheableRequest(super.method, super.url, {this.mode, this.control});
+  /// If `true`, response is cached and not modified, then respond with a 304 without the body.
+  /// For now properly works only with ETags.
+  final bool? useNotModified;
 
-  CacheableRequest.get(Uri url, {this.mode, this.control}): super(kHttpMethodGet, url);
-  CacheableRequest.head(Uri url, {this.mode, this.control}): super(kHttpMethodHead, url);
+  CacheableRequest(super.method, super.url, {this.mode, this.control, this.useNotModified});
+
+  CacheableRequest.get(Uri url, {this.mode, this.control, this.useNotModified}): super(kHttpMethodGet, url);
+  CacheableRequest.head(Uri url, {this.mode, this.control, this.useNotModified}): super(kHttpMethodHead, url);
 }
 
 extension HttpCacheStream<T> on Stream<T> {
