@@ -192,7 +192,7 @@ class FileCache extends HttpCache {
   }
 
   @override
-  Future<HttpCacheEntry?> update(covariant FileCacheEntry entry, Headers headers, [covariant FileCacheRequestContext? context]) async {
+  Future<HttpCacheEntry?> update(covariant FileCacheEntry entry, [Headers? headers, CachingInfo? info, covariant FileCacheRequestContext? context]) async {
     await _checkInitialize();
     final existing = _entries[entry.filename];
 
@@ -203,7 +203,7 @@ class FileCache extends HttpCache {
     final key = _lockKey(entry.file);
 
     return await _checkLock(context, key, () async {
-      final updated = await existing.updateWith(headers);
+      final updated = await existing._with(headers, info);
       _entries[entry.filename] = updated;
       return updated;
     });
@@ -517,8 +517,8 @@ class FileCacheEntry extends HttpCacheEntry {
         && (key.varyHeaders?.entries.every((e) => request.headers[e.key] == e.value) ?? true);
   }
 
-  Future<FileCacheEntry> updateWith(Headers headers) async {
-    final newMeta = withHeaders(headers);
+  Future<FileCacheEntry> _with(Headers? headers, CachingInfo? info) async {
+    final newMeta = copyWith(date: headers?.readDate(), headers: headers, info: info);
     final newMetaBytes = newMeta.toBytes();
     final newMetaLength = newMetaBytes.lengthInBytes;
 
@@ -537,7 +537,7 @@ class FileCacheEntry extends HttpCacheEntry {
       await tmp.rename(file.path);
     }
 
-    return FileCacheEntry(key, headers.readDate(), info.withHeaders(headers), reasonPhrase, headers, file, newMetaLength, filename, stat);
+    return FileCacheEntry(key, newMeta.date, newMeta.info, reasonPhrase, newMeta.responseHeaders, file, newMetaLength, filename, stat);
   }
 }
 

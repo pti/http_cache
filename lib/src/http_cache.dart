@@ -73,7 +73,7 @@ abstract class HttpCache {
   FutureOr<void> clear();
 
   /// Updates metadata associated with the entry.
-  FutureOr<HttpCacheEntry?> update(HttpCacheEntry entry, Headers headers, [CacheRequestContext? context]);
+  FutureOr<HttpCacheEntry?> update(HttpCacheEntry entry, [Headers? headers, CachingInfo? info, CacheRequestContext? context]);
 
   /// Cache utilizing entry point / interceptor for sending HTTP requests.
   Future<StreamedResponse> send(BaseRequest request, Client inner) async {
@@ -166,8 +166,11 @@ abstract class HttpCache {
   CacheMode _getMode(BaseRequest request) => (request is CacheableRequest ? request.mode : null) ?? mode;
 
   Future<StreamedResponse> _handleResponse(BaseRequest request, StreamedResponse response, HttpCacheEntry? entry, CacheRequestContext context) async {
+    final notModified = response.statusCode == kHttpStatusNotModified && entry != null;
+    final statusCode = notModified ? kHttpStatusOk : response.statusCode;
+    final info = CachingInfo.fromResponse(request, statusCode, response.headers, defaultCacheControl);
 
-    if (response.statusCode == kHttpStatusNotModified && entry != null) {
+    if (notModified) {
       // Return the response from the cache.
       // Update the entry in case headers changed (e.g. date or expires → update CachingInfo.expires).
       // The 304 response might not contain all of the headers (e.g. content-type / length) so instead simply replacing
@@ -175,20 +178,18 @@ abstract class HttpCache {
       final mergedHeaders = <String, String>{};
       mergedHeaders.addAll(entry.responseHeaders);
       mergedHeaders.addAll(response.headers);
-      final updated = await update(entry, mergedHeaders, context);
+      final updated = await update(entry, mergedHeaders, info, context);
       return _toResponse(updated ?? entry, request, response, context);
+    }
+
+    if (!isResponseCacheable(request, response, info)) {
+      _log('not cacheable, ${request.url}');
+      return response;
     }
 
     if (entry != null) {
       _log('got response ${response.statusCode}, evict entry before creating the replacement, ${entry.key.url}');
       await evict(entry.key, context);
-    }
-
-    final info = CachingInfo.fromResponse(request, response.statusCode, response.headers, defaultCacheControl);
-
-    if (!isResponseCacheable(request, response, info)) {
-      _log('not cacheable, ${request.url}');
-      return response;
     }
 
     // Store the response to the cache.

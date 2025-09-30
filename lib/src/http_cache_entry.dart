@@ -54,13 +54,13 @@ class CacheEntryMeta {
     );
   }
 
-  CacheEntryMeta withHeaders(Headers headers) {
+  CacheEntryMeta copyWith({DateTime? date, CachingInfo? info, Headers? headers}) {
     return CacheEntryMeta(
       key,
-      headers.readDate(),
-      info.withHeaders(headers),
+      date ?? this.date,
+      info ?? this.info,
       reasonPhrase,
-      headers,
+      headers ?? responseHeaders,
     );
   }
 }

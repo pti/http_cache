@@ -33,14 +33,16 @@ class MemoryCache extends HttpCache {
   }
 
   @override
-  HttpCacheEntry? update(covariant MemoryCacheEntry entry, Headers headers, [CacheRequestContext? context]) {
+  HttpCacheEntry? update(covariant MemoryCacheEntry entry, [Headers? headers, CachingInfo? info, CacheRequestContext? context]) {
     final index = _entries.indexWhere((e) => e == entry);
 
     if (index == -1) {
       return null;
     }
 
-    final updated = _entries[index].updateWith(headers);
+    final old = _entries[index];
+    final newMeta = old.copyWith(date: headers?.readDate(), headers: headers, info: info);
+    final updated = MemoryCacheEntry(old.key, newMeta.date, newMeta.info, newMeta.reasonPhrase, newMeta.responseHeaders, old.body);
     _entries[index] = updated;
     return updated;
   }
@@ -86,9 +88,5 @@ class MemoryCacheEntry extends HttpCacheEntry {
       isRedirect: response?.isRedirect ?? false,
       headers: responseHeaders,
     );
-  }
-
-  MemoryCacheEntry updateWith(Headers headers) {
-    return MemoryCacheEntry(key, headers.readDate(), info.withHeaders(headers), reasonPhrase, headers, body);
   }
 }

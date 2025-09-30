@@ -42,15 +42,6 @@ class CachingInfo {
     return CachingInfo(statusCode, control, vary, etag, expires, lastModified);
   }
 
-  CachingInfo withHeaders(Headers headers) {
-    final control = CacheControl.fromHeaders(headers) ?? this.control;
-    final vary = headers[kHttpHeaderVary];
-    final etag = headers[kHttpHeaderETag];
-    final expires = _readExpires(headers, control);
-    final lastModified = tryParseHttpDate(headers[kHttpHeaderLastModifiedHeader]);
-    return CachingInfo(statusCode, control, vary, etag, expires, lastModified);
-  }
-
   bool isCacheable() {
     // https://developer.mozilla.org/en-US/docs/Glossary/cacheable
     const cacheableStatuses = {200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501};
