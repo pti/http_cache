@@ -20,6 +20,11 @@ class CacheableRequest extends Request {
 
   CacheableRequest.get(Uri url, {this.mode, this.control, this.useNotModified}): super(kHttpMethodGet, url);
   CacheableRequest.head(Uri url, {this.mode, this.control, this.useNotModified}): super(kHttpMethodHead, url);
+
+  DateTime? get expires {
+    final maxAge = control?.maxAge;
+    return maxAge == null ? null : DateTime.now().add(maxAge);
+  }
 }
 
 extension HttpCacheStream<T> on Stream<T> {

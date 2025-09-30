@@ -21,16 +21,23 @@ class CachingInfo {
 
   factory CachingInfo.fromResponse(BaseRequest request, int statusCode, Headers headers, CacheControl? defaultControl) {
     var control = CacheControl.fromHeaders(headers);
+    DateTime? expires;
 
-    if (request is CacheableRequest && request.control != null) {
-      control = control?.override(request.control!) ?? request.control;
+    if (request is CacheableRequest) {
+      final controlOverride = request.control;
+
+      if (controlOverride != null) {
+        control = control?.override(controlOverride) ?? controlOverride;
+      }
+
+      expires = request.expires;
     }
 
     control ??= defaultControl;
 
     final vary = headers[kHttpHeaderVary];
     final etag = headers[kHttpHeaderETag];
-    final expires = _readExpires(headers, control);
+    expires ??= _readExpires(headers, control);
     final lastModified = tryParseHttpDate(headers[kHttpHeaderLastModifiedHeader]);
     return CachingInfo(statusCode, control, vary, etag, expires, lastModified);
   }
